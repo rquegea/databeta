@@ -1,7 +1,8 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { Send, ChevronDown, X } from 'lucide-react';
+import { Send, ChevronDown, X, Bug } from 'lucide-react';
 import { Layout } from './Layout';
 import { Operations } from './components/Operations';
+import ApiDebugger from './ApiDebugger.js'; // Import the debugger component
 
 interface NavItem {
   label: string;
@@ -54,6 +55,7 @@ interface ChartLayout {
 interface ChatMessage {
   role: 'user' | 'assistant' | 'system';
   content: string;
+  visualization?: string;
 }
 
 function App() {
@@ -73,6 +75,8 @@ function App() {
   const [chatHistory, setChatHistory] = useState<ChatMessage[]>([]);
   const [isLoading, setIsLoading] = useState(false);
   const [showChat, setShowChat] = useState(false);
+  const [showDebugger, setShowDebugger] = useState(false); // Estado para mostrar/ocultar el debugger
+  const [apiError, setApiError] = useState<string | null>(null); // Estado para mostrar errores de API
   
   const menuRef = useRef<HTMLDivElement>(null);
   const hoverTimerRef = useRef<NodeJS.Timeout | null>(null);
@@ -242,8 +246,7 @@ function App() {
     }));
   };
 
-  // Función actualizada para manejar el envío de mensajes al backend
-  
+  // Función actualizada para manejar el envío de mensajes al backend con URL absoluta
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     
@@ -255,7 +258,8 @@ function App() {
     setIsLoading(true);
     
     try {
-      const response = await fetch('http://localhost:5000/api/chat', {
+      console.log('Enviando mensaje al servidor:', userMessage);
+      const response = await fetch('/api/chat', {  // Cambio a ruta relativa
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -263,7 +267,12 @@ function App() {
         body: JSON.stringify({ message: userMessage }),
       });
       
+      if (!response.ok) {
+        throw new Error(`Error HTTP: ${response.status}`);
+      }
+      
       const data = await response.json();
+      console.log('Respuesta recibida:', data);
       
       setChatHistory(prev => [...prev, { 
         role: 'assistant', 
@@ -365,10 +374,21 @@ function App() {
               className={`p-2 rounded-lg max-w-[85%] ${
                 msg.role === 'user' 
                   ? 'bg-blue-100 text-blue-800 ml-auto'
-                  : 'bg-white/90 backdrop-blur-sm shadow-sm'
+                  : msg.role === 'system'
+                    ? 'bg-red-100 text-red-800'
+                    : 'bg-white/90 backdrop-blur-sm shadow-sm'
               }`}
             >
               <p className="text-[12px]">{msg.content}</p>
+              {msg.visualization && (
+                <div className="mt-2">
+                  <img 
+                    src={msg.visualization} 
+                    alt="Visualización" 
+                    className="rounded max-w-full"
+                  />
+                </div>
+              )}
             </div>
           ))}
           {isLoading && (
@@ -387,6 +407,26 @@ function App() {
 
   return (
     <Layout>
+      {/* API Debugger Modal */}
+      {showDebugger && (
+        <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4">
+          <div className="bg-white rounded-lg shadow-xl w-full max-w-3xl max-h-[80vh] overflow-auto">
+            <div className="p-4 border-b flex justify-between items-center">
+              <h2 className="text-lg font-semibold">API Debugger</h2>
+              <button 
+                onClick={() => setShowDebugger(false)}
+                className="text-gray-500 hover:text-gray-700"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+            <div className="p-4">
+              <ApiDebugger />
+            </div>
+          </div>
+        </div>
+      )}
+
       <div className="flex flex-col h-screen">
         <nav className="w-full h-12 bg-white/80 backdrop-blur-sm shadow-sm fixed top-0 left-0 z-50">
           <div className="container mx-auto px-2">
@@ -444,6 +484,15 @@ function App() {
                     )}
                   </div>
                 ))}
+                
+                {/* Botón del Debugger */}
+                <button
+                  onClick={() => setShowDebugger(true)}
+                  className="text-[10px] text-gray-600 hover:text-gray-900 transition-colors duration-200 flex items-center gap-1"
+                  title="API Debugger"
+                >
+                  <Bug className="w-3 h-3" />
+                </button>
               </div>
             </div>
           </div>
@@ -470,6 +519,33 @@ function App() {
             />
           )}
         </div>
+
+        {/* Mostrar error de API si existe */}
+        {apiError && (
+          <div className="fixed top-4 right-4 bg-red-100 border-l-4 border-red-500 text-red-700 p-4 rounded shadow-lg z-50">
+            <div className="flex">
+              <div className="flex-shrink-0">
+                <svg className="h-5 w-5 text-red-500" fill="currentColor" viewBox="0 0 20 20">
+                  <path fillRule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zM8.707 7.293a1 1 0 00-1.414 1.414L8.586 10l-1.293 1.293a1 1 0 101.414 1.414L10 11.414l1.293 1.293a1 1 0 001.414-1.414L11.414 10l1.293-1.293a1 1 0 00-1.414-1.414L10 8.586 8.707 7.293z" clipRule="evenodd" />
+                </svg>
+              </div>
+              <div className="ml-3">
+                <p className="text-sm">{apiError}</p>
+              </div>
+              <div className="ml-auto pl-3">
+                <div className="-mx-1.5 -my-1.5">
+                  <button
+                    onClick={() => setApiError(null)}
+                    className="inline-flex rounded-md p-1.5 text-red-500 hover:bg-red-200 focus:outline-none focus:ring-2 focus:ring-red-600 focus:ring-offset-2"
+                  >
+                    <span className="sr-only">Dismiss</span>
+                    <X className="h-4 w-4" />
+                  </button>
+                </div>
+              </div>
+            </div>
+          </div>
+        )}
 
         {/* Renderizar el historial de chat */}
         {renderChatHistory()}

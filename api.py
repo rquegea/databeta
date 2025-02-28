@@ -7,6 +7,7 @@ from datetime import datetime
 import base64
 from pathlib import Path
 from openai import OpenAI
+from flask_cors import CORS
 
 # Importar funciones de app.py
 from app import (
@@ -29,13 +30,24 @@ os.makedirs(VISUALIZATIONS_DIR, exist_ok=True)
 # Conexión a la base de datos con check_same_thread=False para usar en Flask
 conn = sqlite3.connect('data/flight_radar4.db', check_same_thread=False)
 
+
+
 app = Flask(__name__, static_folder=STATIC_DIR)
 CORS(app)  # Habilitar CORS para todas las rutas
+
+# Por esta configuración más específica
+CORS(app, resources={r"/*": {"origins": "*"}}, supports_credentials=True)
 
 # Variables globales para el estado
 openai_client = None
 doc_db = None
 conversation_history = []
+
+# Añade esto a api.py
+@app.route('/api/ping', methods=['GET'])
+def ping():
+    return jsonify({"status": "success", "message": "API is running"})
+
 
 @app.route('/api/chat', methods=['POST'])
 def chat():
@@ -406,4 +418,4 @@ def initialize_server():
 
 if __name__ == '__main__':
     initialize_server()
-    app.run(debug=True, port=5000)
+    app.run(debug=True, host='0.0.0.0', port=5001) 
