@@ -48,7 +48,17 @@ conversation_history = []
 def ping():
     return jsonify({"status": "success", "message": "API is running"})
 
-
+@app.route('/api/', methods=['GET'])
+def api_root():
+    """Ruta raíz para la API"""
+    return jsonify({
+        "status": "online",
+        "available_endpoints": [
+            "/api/chat",
+            "/api/visualizations/<filename>",
+            "/api/clear-chat"
+        ]
+    })
 @app.route('/api/chat', methods=['POST'])
 def chat():
     global conversation_history, openai_client, doc_db
@@ -418,4 +428,4 @@ def initialize_server():
 
 if __name__ == '__main__':
     initialize_server()
-    app.run(debug=True, host='0.0.0.0', port=5001) 
+    app.run(debug=True, port=5001)
