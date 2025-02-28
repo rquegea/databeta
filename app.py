@@ -37,28 +37,41 @@ DOCUMENT_DIR = "docs"
 CHROMA_DIR = "chroma_db"
 DATABASE = 'data/flight_radar4.db'
 
-def get_db():
-    """
-    Get a database connection.
-    Creates a new connection if one doesn't exist for this context.
-    """
-    # Check if a database connection already exists in the application context
-    db = getattr(g, '_database', None)
-    if db is None:
-        # Create a new connection if it doesn't exist
-        # Use check_same_thread=False only when using Flask's thread-local storage
-        db = g._database = sqlite3.connect(DATABASE, check_same_thread=False)
-        # Ensure the database file's directory exists
-        os.makedirs(os.path.dirname(DATABASE), exist_ok=True)
-    return db
+import sqlite3
+from openai import OpenAI
+import os
+import json
+from datetime import datetime
+import textwrap
+import matplotlib.pyplot as plt
+import seaborn as sns
+import pandas as pd
+import numpy as np
+from io import BytesIO
+import base64
+import glob
+from pathlib import Path
+from typing import List, Dict, Any, Optional, Tuple
+import sys
+from flask import g
 
-def close_db(error=None):
-    """
-    Close the database connection at the end of the request.
-    """
-    db = getattr(g, '_database', None)
-    if db is not None:
-        db.close()
+# Dependencias para análisis de documentos
+from langchain_text_splitters import RecursiveCharacterTextSplitter
+from langchain_community.document_loaders import (
+    PyPDFLoader,
+    Docx2txtLoader,
+    TextLoader,
+    CSVLoader,
+    UnstructuredExcelLoader
+)
+from langchain_community.vectorstores import Chroma
+from langchain_openai import OpenAIEmbeddings
+from langchain_core.documents import Document
+
+# Configuración para análisis de documentos
+DOCUMENT_DIR = "docs"
+CHROMA_DIR = "chroma_db"
+DATABASE = 'data/flight_radar4.db'
 
 
 def init_db(app):
@@ -67,110 +80,75 @@ def init_db(app):
     """
     # Register the close_db function to run at the end of each request
     app.teardown_appcontext(close_db)
+    
+    # Asegurarse de que existe el directorio de datos
+    import os
+    os.makedirs(os.path.dirname(DATABASE), exist_ok=True)
+    
+    # Inicializar g._database aquí no es necesario porque
+    # get_db() se encargará de eso cuando se llame
+def get_db():
+    """
+    Get a database connection.
+    Creates a new connection if one doesn't exist for this context.
+    """
+    from flask import g
+    # Check if a database connection already exists in the application context
+    db = getattr(g, '_database', None)
+    if db is None:
+        # Create a new connection if it doesn't exist
+        # Use check_same_thread=False only when using Flask's thread-local storage
+        db = g._database = sqlite3.connect(DATABASE, check_same_thread=False)
+    return db
+
+def close_db(error=None):
+    """
+    Close the database connection at the end of the request.
+    """
+    from flask import g
+    db = getattr(g, '_database', None)
+    if db is not None:
+        db.close()
+
+
 
 def get_table_names():
-    """
-    Get all table names from the database.
-    
-    Returns:
-        List of table names in the database
-    """
-    try:
-        # Use the current request's database connection
-        cursor = get_db().cursor()
-        tables = cursor.execute('SELECT name FROM sqlite_master WHERE type="table"')
-        return [table[0] for table in tables.fetchall()]
-    except Exception as e:
-        print(f"Error getting table names: {e}")
-        return []
+    """Obtener todos los nombres de tablas de la base de datos."""
+    table_names = []
+    db = get_db()
+    tables = db.execute('SELECT name FROM sqlite_master WHERE type="table"')
+    for table in tables.fetchall():
+        table_names.append(table[0])
+    return table_names
 
 def get_column_names(table_name):
-    """
-    Get column names for a specific table.
-    
-    Args:
-        table_name (str): Name of the table to get columns for
-    
-    Returns:
-        List of column names
-    """
-    try:
-        cursor = get_db().cursor()
-        columns = cursor.execute(f"PRAGMA table_info('{table_name}')")
-        return [col[1] for col in columns.fetchall()]
-    except Exception as e:
-        print(f"Error getting column names for {table_name}: {e}")
-        return []
-
-def execute_query(query, params=None):
-    """
-    Execute a SQL query safely.
-    
-    Args:
-        query (str): SQL query to execute
-        params (tuple, optional): Parameters for parameterized query
-    
-    Returns:
-        List of query results or None if an error occurs
-    """
-    try:
-        db = get_db()
-        cursor = db.cursor()
-        
-        # Use parameterized query if params are provided
-        if params:
-            cursor.execute(query, params)
-        else:
-            cursor.execute(query)
-        
-        # Fetch and return results
-        return cursor.fetchall()
-    except sqlite3.Error as e:
-        print(f"Database error: {e}")
-        return None
-    except Exception as e:
-        print(f"Unexpected error executing query: {e}")
-        return None
+    """Obtener los nombres de columnas para una tabla específica."""
+    column_names = []
+    db = get_db()
+    columns = db.execute(f"PRAGMA table_info('{table_name}')")
+    for col in columns:
+        column_names.append(col[1])
+    return column_names
 
 def get_table_sample(table_name, limit=5):
-    """
-    Get a sample of data from a table.
-    
-    Args:
-        table_name (str): Name of the table
-        limit (int, optional): Number of rows to retrieve. Defaults to 5.
-    
-    Returns:
-        List of dictionaries containing sample data
-    """
+    """Obtener una muestra de datos de una tabla para entender su estructura."""
     try:
-        # Get column names first
+        db = get_db()
+        query = f"SELECT * FROM {table_name} LIMIT {limit}"
+        sample_data = db.execute(query).fetchall()
         columns = get_column_names(table_name)
         
-        # Execute query to get sample data
-        query = f"SELECT * FROM {table_name} LIMIT {limit}"
-        results = execute_query(query)
-        
-        if results is None:
-            return []
-        
-        # Convert results to list of dictionaries
+        # Formatear los datos para mejor visualización
         formatted_data = []
-        for row in results:
+        for row in sample_data:
             formatted_data.append(dict(zip(columns, row)))
-        
+            
         return formatted_data
     except Exception as e:
-        print(f"Error getting table sample for {table_name}: {e}")
-        return []
+        return f"Error al obtener muestra de la tabla {table_name}: {e}"
 
 def get_database_info():
-    """
-    Obtain detailed information about the database structure.
-    
-    Returns:
-        List of dictionaries containing information about each table
-    """
+    """Obtener información detallada sobre la estructura de la base de datos."""
     database_info = []
     tables = get_table_names()
     
@@ -178,21 +156,20 @@ def get_database_info():
         columns = get_column_names(table_name)
         sample_data = get_table_sample(table_name, limit=2)
         
-        # Count rows
+        # Contar filas
         try:
-            row_count_query = f"SELECT COUNT(*) FROM {table_name}"
-            row_count_result = execute_query(row_count_query)
-            row_count = row_count_result[0][0] if row_count_result else "Error counting rows"
+            db = get_db()
+            row_count = db.execute(f"SELECT COUNT(*) FROM {table_name}").fetchone()[0]
         except Exception as e:
             row_count = f"Error al contar filas: {str(e)}"
-        
-        # Get column information
+            
+        # Obtener información sobre columnas (tipos de datos)
         column_info = []
         for col in columns:
             try:
-                # Detect data type based on sample
+                # Detectar tipo de datos basado en muestra
                 data_type = "desconocido"
-                if sample_data and len(sample_data) > 0:
+                if isinstance(sample_data, list) and len(sample_data) > 0:
                     if col in sample_data[0]:
                         value = sample_data[0][col]
                         if value is not None:
@@ -207,231 +184,15 @@ def get_database_info():
                     "name": col,
                     "data_type": f"error al detectar: {str(e)}"
                 })
-        
+                
         database_info.append({
             "table_name": table_name,
             "columns": column_info,
             "row_count": row_count,
-            "sample_data": sample_data if sample_data else "Error: No sample data"
+            "sample_data": sample_data if not isinstance(sample_data, str) else "Error: " + sample_data
         })
     
     return database_info
-
-def generate_database_schema_string():
-    """
-    Generate a text representation of the database schema.
-    
-    Returns:
-        String containing database schema information
-    """
-    db_info = get_database_info()
-    schema_parts = []
-    
-    for table in db_info:
-        table_name = table["table_name"]
-        columns_info = [f"{col['name']} ({col['data_type']})" for col in table["columns"]]
-        row_count = table["row_count"]
-        
-        schema_parts.append(f"Tabla: {table_name} ({row_count} filas)")
-        schema_parts.append(f"Columnas: {', '.join(columns_info)}")
-        
-        # Add sample data if available
-        if isinstance(table["sample_data"], list) and len(table["sample_data"]) > 0:
-            sample_str = "Ejemplo de datos:\n"
-            for i, row in enumerate(table["sample_data"][:2]):
-                sample_str += f"  Fila {i+1}: {json.dumps(row, ensure_ascii=False)}\n"
-            schema_parts.append(sample_str)
-        
-        schema_parts.append("")  # Blank line to separate tables
-    
-    return "\n".join(schema_parts)
-
-def modify_query_for_date_formatting(query, table_names):
-    """
-    Modify SQL query to format date columns automatically.
-    
-    Args:
-        query (str): Original SQL query
-        table_names (list): List of table names in the database
-    
-    Returns:
-        str: Modified query with date formatting
-    """
-    # Get information of all columns from all tables
-    all_columns = {}
-    date_columns = []
-    
-    for table in table_names:
-        columns = get_column_names(table)
-        all_columns[table] = columns
-        
-        # Identify possible date/time columns
-        for col in columns:
-            col_lower = col.lower()
-            if any(term in col_lower for term in ['time', 'date', 'timestamp', 'created', 'updated', 
-                                                'fecha', 'hora', 'tiempo']):
-                date_columns.append((table, col))
-    
-    # If no date columns, return original query
-    if not date_columns:
-        return query
-    
-    # Check if it's a simple SELECT query
-    query_lower = query.lower().strip()
-    if not query_lower.startswith('select '):
-        return query
-    
-    # For SELECT queries, modify to format dates
-    modified_query = query
-    
-    # Find SELECT and FROM in the query
-    try:
-        select_pos = query_lower.find('select ')
-        from_pos = query_lower.find(' from ')
-        
-        if select_pos != -1 and from_pos != -1:
-            select_clause = query[select_pos + 7:from_pos].strip()
-            
-            # If it's SELECT *, expand to all columns and apply date formatting
-            if select_clause == '*':
-                # Try to determine the table from the FROM clause
-                rest_of_query = query_lower[from_pos + 6:]
-                table_clause_end = min(pos for pos in [
-                    rest_of_query.find(' where '), 
-                    rest_of_query.find(' group by '),
-                    rest_of_query.find(' order by '),
-                    rest_of_query.find(' limit '),
-                    len(rest_of_query)
-                ] if pos != -1)
-                
-                table_name = rest_of_query[:table_clause_end].strip().split(' ')[0].strip()
-                
-                if table_name in all_columns:
-                    new_select_parts = []
-                    
-                    for col in all_columns[table_name]:
-                        if any((table_name, col) == date_col for date_col in date_columns):
-                            new_select_parts.append(f"datetime({col}, 'unixepoch', 'localtime') AS {col}")
-                        else:
-                            new_select_parts.append(col)
-                    
-                    new_select_clause = ", ".join(new_select_parts)
-                    modified_query = query.replace("*", new_select_clause)
-            
-            # If not SELECT *, search for date columns in the SELECT clause
-            else:
-                for table, col in date_columns:
-                    # Check if the column is in the SELECT
-                    if col in select_clause or f"{table}.{col}" in select_clause:
-                        # Replace the column with its formatted version
-                        if f"{table}.{col}" in select_clause:
-                            old_col = f"{table}.{col}"
-                            new_col = f"datetime({table}.{col}, 'unixepoch', 'localtime') AS {col}"
-                        else:
-                            old_col = col
-                            new_col = f"datetime({col}, 'unixepoch', 'localtime') AS {col}"
-                        
-                        # Replace only if it's an independent column
-                        parts = select_clause.split(',')
-                        for i, part in enumerate(parts):
-                            part = part.strip()
-                            if part == old_col or part.endswith(f" AS {col}") or part.endswith(f" as {col}"):
-                                parts[i] = new_col
-                        
-                        new_select_clause = ", ".join(parts)
-                        modified_query = query.replace(select_clause, new_select_clause)
-    except:
-        # If there's an error, return the original query
-        return query
-    
-    return modified_query
-
-def ask_database(query):
-    """
-    Execute a SQL query and return results with readable date formatting.
-    
-    Args:
-        query (str): SQL query to execute
-    
-    Returns:
-        Dict containing query results and metadata
-    """
-    try:
-        # Validate that the query is safe
-        if any(keyword in query.lower() for keyword in ['drop', 'delete', 'truncate', 'alter']):
-            return {
-                "query": query,
-                "success": False,
-                "error": "Error: Query contains potentially dangerous keywords."
-            }
-        
-        # Execute the query
-        cursor = get_db().cursor()
-        cursor.execute(query)
-        
-        # Get column names
-        column_names = [description[0] for description in cursor.description]
-        results = cursor.fetchall()
-        
-        # Limit output if results are too large
-        MAX_ROWS = 100
-        truncated = False
-        if len(results) > MAX_ROWS:
-            results = results[:MAX_ROWS]
-            truncated = True
-        
-        # Find timestamp or date columns by common patterns
-        time_column_patterns = [
-            'time', 'date', 'timestamp', 'created', 'modified', 'updated',
-            'fecha', 'hora', 'tiempo', 'creado', 'modificado', 'actualizado'
-        ]
-        
-        # Identify possible timestamp columns
-        time_columns_indices = []
-        for i, col_name in enumerate(column_names):
-            col_lower = col_name.lower()
-            if any(pattern in col_lower for pattern in time_column_patterns):
-                time_columns_indices.append(i)
-        
-        # Convert to list of dictionaries and process dates
-        formatted_results = []
-        for row in results:
-            row_list = list(row)
-            
-            # Try to convert possible UNIX timestamps to readable format
-            for idx in time_columns_indices:
-                try:
-                    value = row_list[idx]
-                    # Check if it's a number (possible UNIX timestamp)
-                    if isinstance(value, (int, float)) and value > 1000000000:
-                        # Convert using Python's datetime
-                        dt = datetime.fromtimestamp(value)
-                        row_list[idx] = dt.strftime('%d/%m/%y %H:%M:%S')
-                except:
-                    # If conversion fails, keep original value
-                    pass
-            
-            formatted_results.append(dict(zip(column_names, row_list)))
-        
-        # Prepare response
-        response = {
-            "query": query,
-            "success": True,
-            "results_count": len(results),
-            "truncated": truncated,
-            "column_names": column_names,
-            "results": formatted_results
-        }
-        
-        return response
-        
-    except Exception as e:
-        error_info = {
-            "query": query,
-            "success": False,
-            "error": str(e)
-        }
-        return error_info
 
 def generate_database_schema_string():
     """Generar una representación de texto del esquema de la base de datos."""
@@ -612,10 +373,17 @@ def ask_database(query):
     try:
         # Validar que la consulta es segura
         if any(keyword in query.lower() for keyword in ['drop', 'delete', 'truncate', 'alter']):
-            return "Error: La consulta contiene palabras clave potencialmente peligrosas."
+            return {
+                "query": query,
+                "success": False,
+                "error": "Error: La consulta contiene palabras clave potencialmente peligrosas."
+            }
             
+        # Obtener conexión a la base de datos
+        db = get_db()
+        
         # Convertir resultados a formato lista de diccionarios para mejor procesamiento
-        cursor = conn.execute(query)
+        cursor = db.execute(query)
         column_names = [description[0] for description in cursor.description]
         results = cursor.fetchall()
         
@@ -652,7 +420,7 @@ def ask_database(query):
                     if isinstance(value, (int, float)) and value > 1000000000:  # Probablemente timestamp UNIX
                         # Convertir usando datetime de Python
                         dt = datetime.fromtimestamp(value)
-                        row_list[idx] = dt.strftime('%d/%m/%y')
+                        row_list[idx] = dt.strftime('%d/%m/%y %H:%M:%S')
                 except:
                     # Si falla la conversión, dejar el valor original
                     pass
@@ -981,13 +749,41 @@ from dotenv import load_dotenv
 import os
 
 def get_api_key():
-    load_dotenv()  # Cargar variables de entorno desde .env
-    api_key = os.getenv("OPENAI_API_KEY")
-    
-    if not api_key:
-        raise ValueError("No se encontró la API key de OpenAI. Por favor, configúrala en el archivo .env")
-    
-    return api_key
+    """Obtiene la API key desde el archivo .env, sobrescribiendo cualquier valor existente"""
+    try:
+        # Forzar la recarga para sobrescribir cualquier variable existente
+        load_dotenv(override=True)
+        
+        # Intentar cargar la clave de la variable de entorno después de recargar
+        api_key = os.getenv("OPENAI_API_KEY")
+        
+        # Si aún no funciona, intentar leer directamente del archivo .env
+        if not api_key:
+            env_path = os.path.join(os.path.dirname(__file__), '.env')
+            if os.path.exists(env_path):
+                with open(env_path, 'r') as f:
+                    for line in f:
+                        if line.startswith('OPENAI_API_KEY='):
+                            api_key = line.strip().split('=', 1)[1]
+                            # Eliminar comillas si existen
+                            api_key = api_key.strip('"\'')
+                            
+                            # Establecer explícitamente la variable de entorno
+                            os.environ["OPENAI_API_KEY"] = api_key
+                            break
+        
+        if not api_key:
+            raise ValueError("No se encontró la API key de OpenAI. Por favor, configúrala en el archivo .env")
+        
+        # Imprimir los primeros y últimos caracteres para debug (sin exponer toda la clave)
+        if api_key:
+            masked_key = f"{api_key[:4]}...{api_key[-4:]}"
+            print(f"API key cargada: {masked_key}")
+        
+        return api_key
+    except Exception as e:
+        print(f"Error al cargar la API key: {str(e)}")
+        raise
 
 def process_documents(api_key):
     """Procesa los documentos disponibles y crea/actualiza la base de datos vectorial."""

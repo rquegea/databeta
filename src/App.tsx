@@ -247,6 +247,7 @@ function App() {
   };
 
   // Función actualizada para manejar el envío de mensajes al backend con URL actualizada al puerto 5001
+  // Función actualizada para manejar el envío de mensajes al backend con URL actualizada al puerto 5001
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     
@@ -260,12 +261,13 @@ function App() {
     
     try {
       console.log('Enviando mensaje al servidor:', userMessage);
-      const response = await fetch('http://localhost:5001/api/chat', {  // Cambiado a puerto 5001
+      const response = await fetch(`${import.meta.env.VITE_API_BASE_URL}/chat`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
         },
         body: JSON.stringify({ message: userMessage }),
+        credentials: 'include'
       });
       
       if (!response.ok) {
@@ -280,7 +282,7 @@ function App() {
         setChatHistory(prev => [...prev, { 
           role: 'assistant', 
           content: data.response || 'No se pudo procesar la respuesta',
-          visualization: `http://localhost:5001${data.visualization_url}`
+          visualization: `${import.meta.env.VITE_API_BASE_URL}${data.visualization_url}`
         }]);
       } else {
         setChatHistory(prev => [...prev, { 

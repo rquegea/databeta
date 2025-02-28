@@ -1,4 +1,4 @@
-from flask import Flask, request, jsonify, send_from_directory
+from flask import Flask, request, jsonify, send_from_directory, g
 from flask_cors import CORS
 import json
 import os
@@ -14,7 +14,7 @@ from app import (
     analyze_query_intent, ask_database, create_visualization,
     query_documents, process_documents, setup_document_directory,
     get_api_key, get_database_info, generate_database_schema_string,
-    get_table_names, extract_document_context
+    get_table_names, extract_document_context, init_db
 )
 
 # Configuración
@@ -27,16 +27,15 @@ VISUALIZATIONS_DIR = os.path.join(STATIC_DIR, "visualizations")
 os.makedirs(STATIC_DIR, exist_ok=True)
 os.makedirs(VISUALIZATIONS_DIR, exist_ok=True)
 
-# Conexión a la base de datos con check_same_thread=False para usar en Flask
-conn = sqlite3.connect('data/flight_radar4.db', check_same_thread=False)
-
-
-
+# Crear la aplicación Flask
 app = Flask(__name__, static_folder=STATIC_DIR)
 CORS(app)  # Habilitar CORS para todas las rutas
 
 # Por esta configuración más específica
 CORS(app, resources={r"/*": {"origins": "*"}}, supports_credentials=True)
+
+# Inicializar la base de datos con la aplicación
+init_db(app)
 
 # Variables globales para el estado
 openai_client = None
@@ -59,6 +58,7 @@ def api_root():
             "/api/clear-chat"
         ]
     })
+
 @app.route('/api/chat', methods=['POST'])
 def chat():
     global conversation_history, openai_client, doc_db
@@ -391,15 +391,16 @@ def initialize_server():
             print("⚠️ No se pudo obtener la API key de OpenAI.")
             openai_client = None
             
-        # Procesar documentos
-        doc_db, processed_files = process_documents(api_key)
-        if doc_db:
-            print(f"✅ Base de datos vectorial iniciada con {len(processed_files)} documentos")
-        else:
-            print("⚠️ No se pudo inicializar la base de datos vectorial")
+        # Procesar documentos dentro del contexto de la aplicación
+        with app.app_context():
+            doc_db, processed_files = process_documents(api_key)
+            if doc_db:
+                print(f"✅ Base de datos vectorial iniciada con {len(processed_files)} documentos")
+            else:
+                print("⚠️ No se pudo inicializar la base de datos vectorial")
             
-        # Obtener información detallada de la base de datos
-        detailed_schema = generate_database_schema_string()
+            # Obtener información detallada de la base de datos
+            detailed_schema = generate_database_schema_string()
         
         # Configurar el mensaje del sistema
         conversation_history = [
@@ -426,6 +427,8 @@ def initialize_server():
     except Exception as e:
         print(f"❌ Error durante la inicialización: {str(e)}")
 
+# Llamada para inicializar el servidor
+initialize_server()
+
 if __name__ == '__main__':
-    initialize_server()
     app.run(debug=True, port=5001)
