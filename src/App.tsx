@@ -246,7 +246,7 @@ function App() {
     }));
   };
 
-  // Función actualizada para manejar el envío de mensajes al backend con URL absoluta
+  // Función actualizada para manejar el envío de mensajes al backend con URL actualizada al puerto 5001
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     
@@ -256,10 +256,11 @@ function App() {
     setChatHistory(prev => [...prev, { role: 'user', content: userMessage }]);
     setMessage('');
     setIsLoading(true);
+    setApiError(null); // Resetear errores previos
     
     try {
       console.log('Enviando mensaje al servidor:', userMessage);
-      const response = await fetch('/api/chat', {  // Cambio a ruta relativa
+      const response = await fetch('http://localhost:5001/api/chat', {  // Cambiado a puerto 5001
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -274,15 +275,26 @@ function App() {
       const data = await response.json();
       console.log('Respuesta recibida:', data);
       
-      setChatHistory(prev => [...prev, { 
-        role: 'assistant', 
-        content: data.response || 'No se pudo procesar la respuesta' 
-      }]);
+      // Verificar si la respuesta incluye una visualización
+      if (data.visualization_url) {
+        setChatHistory(prev => [...prev, { 
+          role: 'assistant', 
+          content: data.response || 'No se pudo procesar la respuesta',
+          visualization: `http://localhost:5001${data.visualization_url}`
+        }]);
+      } else {
+        setChatHistory(prev => [...prev, { 
+          role: 'assistant', 
+          content: data.response || 'No se pudo procesar la respuesta' 
+        }]);
+      }
     } catch (error) {
       console.error('Error:', error);
+      const errorMessage = error instanceof Error ? error.message : 'Error desconocido';
+      setApiError(`Error de conexión: ${errorMessage}`);
       setChatHistory(prev => [...prev, { 
         role: 'assistant', 
-        content: 'Error de conexión. Por favor, verifica el servidor.' 
+        content: 'Error de conexión. Por favor, verifica que el servidor esté ejecutándose en el puerto 5001.' 
       }]);
     } finally {
       setIsLoading(false);
